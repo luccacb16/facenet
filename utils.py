@@ -5,6 +5,7 @@ from torch.utils.data import Dataset
 import numpy as np
 from typing import List, Tuple
 from PIL import Image
+import argparse
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 transform = Compose(
@@ -82,3 +83,11 @@ def get_triplets(embeddings: np.ndarray, labels: np.ndarray, mini_batch: int = 1
     
     print('Triplet montado')
     return triplets
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Treinar a facenet")
+    parser.add_argument('--minibatch', type=int, default=64, help='Mini batch size para seleção de triplets (default: 64)')
+    parser.add_argument('--epochs', type=int, default=16, help='Número de epochs (default: 16)')
+    parser.add_argument('--margin', type=float, default=0.5, help='Margem para triplet loss (default: 0.5)')
+    
+    return parser.parse_args()

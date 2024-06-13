@@ -4,12 +4,13 @@ import torch.optim as optim
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
+import argparse
 from tqdm import tqdm
 import pandas as pd
 import warnings
 warnings.filterwarnings("ignore", message="Initializing zero-element tensors is a no-op")
 
-from utils import device, transform, TripletLoss, TripletDataset, get_triplets
+from utils import device, transform, TripletLoss, TripletDataset, get_triplets, parse_args
 from nn2 import FaceNet
 
 CHECKPOINT_PATH = './checkpoints/'
@@ -98,6 +99,8 @@ def train(model: nn.Module,
 
 # ---------------------------------------------------------------------------------------------------------------------
 
+args = parse_args()
+
 print(f'Device: {device}')
 print(f'Device name: {torch.cuda.get_device_name()}\n')
 
@@ -120,8 +123,8 @@ print('Modelo compilado')
 # Parâmetros
 batch_size = 64
 
-triplet_loss = TripletLoss(margin=0.5)
-dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=4, pin_memory=True)
+triplet_loss = TripletLoss(margin=args.margin)
+dataloader = DataLoader(dataset, batch_size=args.minibatch, shuffle=True, num_workers=4, pin_memory=True)
 
 adamW = optim.AdamW(facenet.parameters(), lr=3e-4)
 
@@ -131,7 +134,7 @@ losses = train(
     triplet_loss     = triplet_loss,
     dataloader       = dataloader,
     optimizer        = adamW,
-    epochs           = 16,
+    epochs           = args.epochs,
     batch_size       = batch_size,
     accumulation     = 64 / batch_size
 )
