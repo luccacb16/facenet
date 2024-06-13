@@ -118,7 +118,7 @@ facenet = torch.compile(facenet)
 print('Modelo compilado')
 
 # Parâmetros
-batch_size = 8
+batch_size = 64
 
 triplet_loss = TripletLoss(margin=0.5)
 dataloader = DataLoader(dataset, batch_size=4, shuffle=True, num_workers=4, pin_memory=True)
