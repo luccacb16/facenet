@@ -4,7 +4,6 @@ import torch.optim as optim
 from torch.nn import functional as F
 from torch.utils.data import DataLoader
 
-import argparse
 from tqdm import tqdm
 import pandas as pd
 import warnings
