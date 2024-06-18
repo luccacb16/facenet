@@ -1,11 +1,11 @@
 import torch
-import torch.nn as nn
 import torch.optim as optim
-from torch.nn import functional as F
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, SubsetRandomSampler
 
 from tqdm import tqdm
 import pandas as pd
+import numpy as np
+import os
 import warnings
 warnings.filterwarnings("ignore", message="Initializing zero-element tensors is a no-op")
 
@@ -14,87 +14,41 @@ from nn2 import FaceNet
 
 CHECKPOINT_PATH = './checkpoints/'
 
-def train(model: nn.Module, 
-          checkpoint_path: str,
-          triplet_loss: nn.Module, 
-          dataloader: DataLoader, 
-          optimizer: optim.Optimizer, 
-          epochs: int, 
-          batch_size: int,
-          accumulation: int = 1):
-    
-    losses = []
-    print('Entrou em train')
+def train(model, dataset, optimizer, triplet_loss, checkpoint_path: str, epochs, batch_size: int = 64, num_samples: int = 1800):
     for epoch in range(epochs):
-        print('Entrou em epoch')
-        model.train()
-        epoch_loss = 0.0
-        accumulated_loss = 0.0  # To track accumulated loss for gradient accumulation
-        
-        tqdm_progress = tqdm(enumerate(dataloader), total=len(dataloader), desc=f'Epoch {epoch+1}', leave=False)
-        for step, (triplet_data, triplet_labels) in tqdm_progress:
-            print(type(triplet_data))
-            print(triplet_data.shape)
-            
-            triplet_data = triplet_data.to(device)
-            triplet_labels = triplet_labels.to(device)
-            print('Entrou em step')
-            # Calcular os embeddings dos triplets
-            print('Calculando os primeiros embeddings')
-            with torch.no_grad():
-                triplet_embeddings = model(triplet_data)
-            print('Primeiros embeddings calculados')
-            
-            # Selecionar os triplets
-            triplet_embeddings_np = triplet_embeddings.detach().cpu().numpy()
-            triplet_labels_np = triplet_labels.detach().cpu().numpy()
-            print('Começando seleção')
-            triplets = get_triplets(triplet_embeddings_np, triplet_labels_np, batch_size, triplet_loss.margin)
-            print('Selecionou!')
-            if triplets:
-                num_triplets = len(triplets)
-                num_batches = (num_triplets + batch_size - 1) // batch_size
+        sampled_indices = np.random.choice(len(dataset), num_samples, replace=False)
+        dataloader = DataLoader(dataset, batch_size=batch_size, sampler=SubsetRandomSampler(sampled_indices), num_workers=2, pin_memory=True)
 
-                for batch_idx in range(num_batches):
-                    print('Entrou no batch')
-                    batch_start = batch_idx * batch_size
-                    batch_end = min((batch_idx + 1) * batch_size, num_triplets)
-                    batch_triplets = triplets[batch_start:batch_end]
-                    
-                    anchors = torch.stack([triplet_embeddings[a] for a, _, _ in batch_triplets])
-                    positives = torch.stack([triplet_embeddings[p] for _, p, _ in batch_triplets])
-                    negatives = torch.stack([triplet_embeddings[n] for _, _, n in batch_triplets])
-                    
-                    anchors = anchors.to(device)
-                    positives = positives.to(device)
-                    negatives = negatives.to(device)
-                    
-                    with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-                        loss = triplet_loss(anchors, positives, negatives) / accumulation
-                    loss.backward()
-                    
-                    accumulated_loss += loss.item()
-                    
-                    # Atualiza os parâmetros após 'accumulation' passos
-                    if (step + 1) % accumulation == 0:
-                        norm = nn.utils.clip_grad_norm_(model.parameters(), 1.0)  # Clip grad norm
-                        optimizer.step()
-                        optimizer.zero_grad()
-                        
-                        epoch_loss += accumulated_loss
-                        accumulated_loss = 0.0
-                        
-            tqdm_progress.set_postfix(loss=accumulated_loss)
-        
-        # Salvamento do checkpoint do modelo
-        torch.save(model.state_dict(), checkpoint_path + f'epoch_{epoch+1}.pt')
-        
-        # Salvar o loss da época
-        losses.append(epoch_loss / len(dataloader))
-        
-        print(f'epoch {epoch+1}/{epochs} | loss: {epoch_loss / len(dataloader):.6f} | norm: {norm:.4f}')
-    
-    return losses
+        model.train()
+        epoch_loss = 0
+
+        for images, labels, paths in tqdm(dataloader, desc=f"Epoch {epoch+1}"):
+            optimizer.zero_grad()
+            embeddings = []
+            images = images.to(device)
+            labels = labels.to(device)
+
+            with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+                embeddings = model(images)
+
+            triplets = get_triplets(embeddings, labels)
+            triplets = torch.tensor(triplets, dtype=torch.long, device=device)
+            print(f'Triplets: {triplets.shape[0]}')
+            total_loss = 0
+
+            for anchor, positive, negative in triplets:
+                anchor = embeddings[anchor].unsqueeze(0)
+                positive = embeddings[positive].unsqueeze(0)
+                negative = embeddings[negative].unsqueeze(0)
+                loss = triplet_loss(anchor, positive, negative)
+                loss.backward()
+                total_loss += loss.item()
+
+            optimizer.step()
+            epoch_loss += total_loss / len(triplets) if triplets.nelement() != 0 else 0
+
+        torch.save(model.state_dict(), os.path.join(checkpoint_path, f'epoch_{epoch+1}.pt'))
+        print(f"Epoch = {epoch+1} | Loss = {epoch_loss / len(dataloader)}")
 
 # ---------------------------------------------------------------------------------------------------------------------
 
@@ -106,34 +60,27 @@ print(f'Device name: {torch.cuda.get_device_name()}\n')
 # Carregar os dados
 lfw = pd.read_csv('./data/lfw_train.csv')
 
-# .apply em 'path'
-lfw['path'] = lfw['path'].apply(lambda x: './data/lfw-faces/' + x.split('/')[-1])
-
-dataset = TripletDataset(paths     = lfw['path'].values, 
-                         labels    = lfw['id'].values, 
+dataset = TripletDataset(dataframe = lfw, 
                          transform = transform)
 
 torch.set_float32_matmul_precision('high')
 
 facenet = FaceNet().to(device)
 facenet = torch.compile(facenet)
-print('Modelo compilado')
 
 # Parâmetros
-batch_size = 64
+batch_size = args.batch_size
 
 triplet_loss = TripletLoss(margin=args.margin)
-dataloader = DataLoader(dataset, batch_size=args.minibatch, shuffle=True, num_workers=4, pin_memory=True)
-
 adamW = optim.AdamW(facenet.parameters(), lr=3e-4)
 
 losses = train(
     model            = facenet,
-    checkpoint_path  = CHECKPOINT_PATH,
-    triplet_loss     = triplet_loss,
-    dataloader       = dataloader,
+    dataset          = dataset,
     optimizer        = adamW,
+    triplet_loss     = triplet_loss,
+    checkpoint_path  = CHECKPOINT_PATH,
     epochs           = args.epochs,
     batch_size       = batch_size,
-    accumulation     = 64 / batch_size
+    num_samples      = args.num_samples
 )

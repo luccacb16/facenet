@@ -2,16 +2,13 @@ import torch
 import torch.nn as nn
 from torchvision.transforms import Compose, Resize, ToTensor, Normalize, Lambda
 from torch.utils.data import Dataset
-import numpy as np
-from typing import List, Tuple
 from PIL import Image
 import argparse
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 transform = Compose(
     [
-    Resize((224, 224)), 
-    Lambda(lambda x: x.convert('RGB')), 
+    Resize((160, 160)), 
     ToTensor(), 
     Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ]
@@ -33,61 +30,58 @@ class TripletLoss(nn.Module):
 
 # Triplet Dataset
 class TripletDataset(Dataset):
-    def __init__(self, paths: List[str], labels: List[int], transform=None):
-        self.paths = paths
-        self.labels = labels
+    def __init__(self, dataframe, transform=None):
+        self.dataframe = dataframe
         self.transform = transform
 
-    def __len__(self) -> int:
-        return len(self.paths)
+    def __len__(self):
+        return len(self.dataframe)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
-        img = Image.open(self.paths[idx])
+    def __getitem__(self, idx):
+        img_path = self.dataframe.iloc[idx]['path']
+        image = Image.open(img_path).convert('RGB')
+        label = self.dataframe.iloc[idx]['id']
+
         if self.transform:
-            img = self.transform(img)
-        label = self.labels[idx]
-        
-        return img, label
+            image = self.transform(image)
+
+        return image, label, img_path
 
 # Triplet Selection
-def get_triplets(embeddings: np.ndarray, labels: np.ndarray, mini_batch: int = 180, margin: float = 0.2) -> List[Tuple[int, int, int]]:
+def get_triplets(embeddings, labels, margin=0.2):
+    dist_matrix = torch.cdist(embeddings, embeddings, p=2)  # Calcula a matriz de distância euclidiana
     triplets = []
-    total_size = len(labels)
-    print(f'Total size {total_size} | mini_batch {mini_batch}')
-    for i in range(0, total_size, mini_batch):
-        end = min(i + mini_batch, total_size)
-        batch_embeddings = embeddings[i:end]
-        batch_labels = labels[i:end]
-        
-        for j in range(len(batch_labels)):
-            anchor_embedding = batch_embeddings[j]
-            anchor_label = batch_labels[j]
-            
-            positive_indices = np.where(batch_labels == anchor_label)[0]
-            negative_indices = np.where(batch_labels != anchor_label)[0]
-            
-            if len(positive_indices) <= 1:
-                print('Nenhum positivo encontrado para a sample', j)
-                continue
-            
-            positive_indices = positive_indices[positive_indices != j]
-            
-            pos_distances = np.linalg.norm(anchor_embedding - batch_embeddings[positive_indices], axis=1)
-            pos_idx = positive_indices[np.argmax(pos_distances)]
-            
-            neg_distances = np.linalg.norm(anchor_embedding - batch_embeddings[negative_indices], axis=1)
-            neg_idx = negative_indices[np.argmin(neg_distances)]
-            
-            if np.min(neg_distances) < np.max(pos_distances) + margin:
-                triplets.append((i + j, i + pos_idx, i + neg_idx))
     
-    print('Triplet montado')
+    for anchor_idx in range(dist_matrix.size(0)):
+        anchor_label = labels[anchor_idx]
+        positive_indices = (labels == anchor_label).nonzero().view(-1)
+        negative_indices = (labels != anchor_label).nonzero().view(-1)
+        
+        if len(positive_indices) < 2:
+            continue
+
+        anchor_pos_distances = dist_matrix[anchor_idx][positive_indices]
+        anchor_neg_distances = dist_matrix[anchor_idx][negative_indices]
+
+        # Escolha do hardest positive
+        positive_idx = positive_indices[anchor_pos_distances.argmax()]
+        hardest_pos_distance = anchor_pos_distances.max()
+
+        # Escolha de semi-hard negatives
+        semi_hard_negatives = anchor_neg_distances[(anchor_neg_distances < hardest_pos_distance) & (anchor_neg_distances > hardest_pos_distance - margin)]
+        if len(semi_hard_negatives) > 0:
+            negative_idx = negative_indices[semi_hard_negatives.argmin()]
+            triplets.append((anchor_idx, positive_idx.item(), negative_idx.item()))
+
     return triplets
+
+
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Treinar a facenet")
-    parser.add_argument('--minibatch', type=int, default=64, help='Mini batch size para seleção de triplets (default: 64)')
+    parser.add_argument('--num_samples', type=int, default=1800, help='Mini batch size para seleção de triplets (default: 1800)')
+    parser.add_argument('--batch_size', type=int, default=64, help='Tamanho do batch (default: 64)')
     parser.add_argument('--epochs', type=int, default=16, help='Número de epochs (default: 16)')
-    parser.add_argument('--margin', type=float, default=0.5, help='Margem para triplet loss (default: 0.5)')
+    parser.add_argument('--margin', type=float, default=0.2, help='Margem para triplet loss (default: 0.2)')
     
     return parser.parse_args()
