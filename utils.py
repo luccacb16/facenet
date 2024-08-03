@@ -7,7 +7,6 @@ import argparse
 import pandas as pd
 import numpy as np
 import torch
-from tqdm import tqdm
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 transform = Compose(
@@ -124,7 +123,8 @@ def parse_args():
     parser.add_argument('--batch_size', type=int, default=8, help='Tamanho do batch (default: 8)')
     parser.add_argument('--epochs', type=int, default=8, help='Número de epochs (default: 8)')
     parser.add_argument('--margin', type=float, default=0.2, help='Margem para triplet loss (default: 0.2)')
-    parser.add_argument('--num_workers', type=int, default=2, help='Número de workers para o DataLoader (default: 2)')
+    parser.add_argument('--num_workers', type=int, default=0, help='Número de workers para o DataLoader (default: 0)')
+    parser.add_argument('--data_path', type=str, default='./data/lfw-faces/', help='Caminho para o dataset (default: ./data/lfw-faces/)')
     parser.add_argument('--device', type=str, default='cuda', help='Dispositivo para treinamento (default: cuda)')
     
     return parser.parse_args()

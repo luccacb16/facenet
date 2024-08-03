@@ -5,8 +5,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import pandas as pd
 import os
-import warnings
-warnings.filterwarnings("ignore", message="Initializing zero-element tensors is a no-op")
+import warnings; warnings.filterwarnings("ignore", message="Initializing zero-element tensors is a no-op")
 
 from utils import transform, TripletLoss, TripletDataset, parse_args, offline_triplet_selection
 from models.nn2 import FaceNet
@@ -55,7 +54,6 @@ def train(model: torch.nn.Module,
             
             if (i + 1) % accumulation == 0:
                 optimizer.step()
-                optimizer.zero_grad()
             
             loss_value = loss.item()
             train_loss += loss_value
@@ -78,6 +76,7 @@ args = parse_args()
 
 device = args.device
 batch_size = args.batch_size
+data_path = args.data_path
 
 print()
 print(f'Device: {device}')
@@ -86,9 +85,9 @@ print(f'Device name: {torch.cuda.get_device_name()}\n')
 embeddings_df = pd.read_pickle('./data/lfw_train_embeddings.pkl')
 triplets_df = offline_triplet_selection(embeddings_df, args.minibatch, args.num_triplets, args.margin)
 
-triplets_df['anchor_path'] = triplets_df['anchor_path'].apply(lambda x: x.replace('../data', './data'))
-triplets_df['positive_path'] = triplets_df['positive_path'].apply(lambda x: x.replace('../data', './data'))
-triplets_df['negative_path'] = triplets_df['negative_path'].apply(lambda x: x.replace('../data', './data'))
+triplets_df['anchor_path'] = triplets_df['anchor_path'].apply(lambda x: data_path + x)
+triplets_df['positive_path'] = triplets_df['positive_path'].apply(lambda x: data_path + x)
+triplets_df['negative_path'] = triplets_df['negative_path'].apply(lambda x: data_path + x)
 
 dataset = TripletDataset(dataframe = triplets_df, 
                          transform = transform)
