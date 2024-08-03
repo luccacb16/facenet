@@ -4,6 +4,10 @@ from torchvision.transforms import Compose, Resize, ToTensor, Normalize, Lambda
 from torch.utils.data import Dataset
 from PIL import Image
 import argparse
+import pandas as pd
+import numpy as np
+import torch
+from tqdm import tqdm
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 transform = Compose(
@@ -30,7 +34,7 @@ class TripletLoss(nn.Module):
 
 # Triplet Dataset
 class TripletDataset(Dataset):
-    def __init__(self, dataframe, transform=None):
+    def __init__(self, dataframe: pd.DataFrame, transform=None):
         self.dataframe = dataframe
         self.transform = transform
 
@@ -38,50 +42,89 @@ class TripletDataset(Dataset):
         return len(self.dataframe)
 
     def __getitem__(self, idx):
-        img_path = self.dataframe.iloc[idx]['path']
-        image = Image.open(img_path).convert('RGB')
-        label = self.dataframe.iloc[idx]['id']
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        anchor_path = self.dataframe.iloc[idx, 0]
+        positive_path = self.dataframe.iloc[idx, 1]
+        negative_path = self.dataframe.iloc[idx, 2]
+                
+        anchor_image = Image.open(anchor_path)
+        positive_image = Image.open(positive_path)
+        negative_image = Image.open(negative_path)
 
         if self.transform:
-            image = self.transform(image)
+            anchor_image = self.transform(anchor_image)
+            positive_image = self.transform(positive_image)
+            negative_image = self.transform(negative_image)
 
-        return image, label, img_path
+        return anchor_image, positive_image, negative_image
 
 # Triplet Selection
-def get_triplets(embeddings, labels, margin=0.2):
-    dist_matrix = torch.cdist(embeddings, embeddings, p=2)  # Calcula a matriz de distância euclidiana
+def offline_triplet_selection(embeddings_df, minibatch=1800, margin=0.2, max_triplets=None):
     triplets = []
+
+    # Reordena aleatoriamente e extrai os embeddings diretamente
+    embeddings_df = embeddings_df.sample(frac=1).reset_index(drop=True)
+
+    # Corrige a extração de embeddings para lidar com arrays aninhados
+    embeddings = np.stack(embeddings_df['embedding'].apply(lambda x: np.array(x[0], dtype=np.float32)).values)
+    embeddings = torch.tensor(embeddings, dtype=torch.float32)
+
+    ids = embeddings_df['id'].to_numpy()
     
-    for anchor_idx in range(dist_matrix.size(0)):
-        anchor_label = labels[anchor_idx]
-        positive_indices = (labels == anchor_label).nonzero().view(-1)
-        negative_indices = (labels != anchor_label).nonzero().view(-1)
+    for i in tqdm(range(0, len(embeddings_df), minibatch), desc="Minibatches"):
+        if max_triplets is not None and len(triplets) >= max_triplets:
+            break  # Interrompe o processo se o número máximo de triplets for atingido
+
+        batch_indices = list(range(i, min(i + minibatch, len(embeddings_df))))
+        batch_embeddings = embeddings[batch_indices]
+        batch_ids = ids[batch_indices]
+
+        distances = torch.cdist(batch_embeddings, batch_embeddings, p=2)
         
-        if len(positive_indices) < 2:
-            continue
+        for anchor_idx in range(len(batch_indices)):
+            if max_triplets is not None and len(triplets) >= max_triplets:
+                break  # Interrompe o loop interno se o número máximo de triplets for atingido
 
-        anchor_pos_distances = dist_matrix[anchor_idx][positive_indices]
-        anchor_neg_distances = dist_matrix[anchor_idx][negative_indices]
+            anchor_id = batch_ids[anchor_idx]
+            positive_mask = batch_ids == anchor_id
+            
+            # Evita a própria âncora como positivo
+            positive_mask[anchor_idx] = False
+            positive_mask = torch.tensor(positive_mask)
+            
+            for positive_idx in torch.where(positive_mask)[0]:
+                d_ap = distances[anchor_idx, positive_idx]
+                
+                negative_mask = (distances[anchor_idx] > d_ap) & (distances[anchor_idx] < d_ap + margin) & (~positive_mask)
+                
+                for negative_idx in torch.where(negative_mask)[0]:
+                    dist = distances[anchor_idx, negative_idx].item() - d_ap.item()
+                    triplets.append((batch_indices[anchor_idx], batch_indices[positive_idx], batch_indices[negative_idx], dist))
 
-        # Escolha do hardest positive
-        positive_idx = positive_indices[anchor_pos_distances.argmax()]
-        hardest_pos_distance = anchor_pos_distances.max()
+                    if max_triplets is not None and len(triplets) >= max_triplets:
+                        break
+                    
+    triplets_df = pd.DataFrame(triplets, columns=['anchor_idx', 'positive_idx', 'negative_idx', 'dist'])
 
-        # Escolha de semi-hard negatives
-        semi_hard_negatives = anchor_neg_distances[(anchor_neg_distances < hardest_pos_distance) & (anchor_neg_distances > hardest_pos_distance - margin)]
-        if len(semi_hard_negatives) > 0:
-            negative_idx = negative_indices[semi_hard_negatives.argmin()]
-            triplets.append((anchor_idx, positive_idx.item(), negative_idx.item()))
+    # Mapeia os índices de volta para os caminhos das imagens usando apply e loc
+    triplets_df['anchor_path'] = triplets_df['anchor_idx'].apply(lambda x: embeddings_df['path'].loc[x])
+    triplets_df['positive_path'] = triplets_df['positive_idx'].apply(lambda x: embeddings_df['path'].loc[x])
+    triplets_df['negative_path'] = triplets_df['negative_idx'].apply(lambda x: embeddings_df['path'].loc[x])
 
-    return triplets
-
-
+    triplets_img_paths_df = triplets_df[['anchor_path', 'positive_path', 'negative_path', 'dist']]
+    
+    return triplets_img_paths_df
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Treinar a facenet")
-    parser.add_argument('--num_samples', type=int, default=1800, help='Mini batch size para seleção de triplets (default: 1800)')
-    parser.add_argument('--batch_size', type=int, default=64, help='Tamanho do batch (default: 64)')
-    parser.add_argument('--epochs', type=int, default=16, help='Número de epochs (default: 16)')
+    parser.add_argument('--num_triplets', type=int, default=100_000, help='Número de triplets (default: 100.000)')
+    parser.add_argument('--minibatch', type=int, default=1800, help='Tamanho do minibatch (default: 1800)')
+    parser.add_argument('--batch_size', type=int, default=8, help='Tamanho do batch (default: 8)')
+    parser.add_argument('--epochs', type=int, default=8, help='Número de epochs (default: 8)')
     parser.add_argument('--margin', type=float, default=0.2, help='Margem para triplet loss (default: 0.2)')
+    parser.add_argument('--num_workers', type=int, default=2, help='Número de workers para o DataLoader (default: 2)')
+    parser.add_argument('--device', type=str, default='cuda', help='Dispositivo para treinamento (default: cuda)')
     
     return parser.parse_args()

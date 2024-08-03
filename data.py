@@ -1,10 +1,13 @@
-from facenet_pytorch import MTCNN, extract_face
+from facenet_pytorch import MTCNN, extract_face, InceptionResnetV1
 import torch
+from torchvision.transforms import Compose, Resize, ToTensor, Normalize, Lambda
 from PIL import Image
 import os
 from tqdm.notebook import tqdm as tqdm
 import pandas as pd
 import numpy as np
+
+from .utils import device, transform
 
 # Se não baixou os dados ainda
 if not os.path.exists('./data/'):
@@ -20,8 +23,8 @@ os.system('rm -f ./data/lfw-dataset.zip')
 os.system('rm -f ./data/*.csv')
 
 # --------------------------------------------------------------------------------------------
+# Extraindo as faces
 
-device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 print(f'Device name: {torch.cuda.get_device_name(0)}')
 
 RAW_LFW_PATH = './data/lfw-deepfunneled/lfw-deepfunneled/'
@@ -70,6 +73,7 @@ print(f'Número de identidades: {df["id"].nunique()}')
 os.system('rm -rf ../data/lfw-deepfunneled/')
 
 # --------------------------------------------------------------------------------------------
+# Split de treino e teste
 
 ids_count = df['id'].value_counts()
 valid_ids = ids_count[ids_count >= 5].index
@@ -90,5 +94,23 @@ print(f"Imagens no conjunto de teste: {len(test_df)}\n")
 print(f"Identidades no conjunto de treino: {train_df['id'].nunique()}")
 print(f"Imagens no conjunto de treino: {len(train_df)}")
 
-train_df.to_csv('../data/lfw_train.csv', index=False)
+# --------------------------------------------------------------------------------------------
+# Extraindo os embeddings
+
+resnet = InceptionResnetV1(pretrained='vggface2').eval().to(device)
+
+def extract_embeddings(model, train_df, transform, device) -> list:
+    embeddings = []
+    for i, row in tqdm(train_df.iterrows(), total=len(train_df)):
+        img = Image.open(row['path'])
+        img = transform(img).to(device)
+        img_embedding = model(img.unsqueeze(0)).detach().cpu().numpy()
+        embeddings.append(img_embedding)
+    
+    return embeddings
+
+embeddings = extract_embeddings(resnet, train_df, transform, device)
+train_df['embedding'] = embeddings
+
+train_df.to_pickle('../data/lfw_train_embeddings.pkl')
 test_df.to_csv('../data/lfw_test.csv', index=False)
