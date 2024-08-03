@@ -1,2 +1,2 @@
 echo python train.py --num_triplets 100000 --minibatch 1800 --batch_size 8 --epochs 8 --margin 0.2 --num_workers 0 --device cuda 
-python train.py --num_triplets 100000 --minibatch 1800 --batch_size 8 --epochs 8 --margin 0.2 --num_workers 0 --device cuda 
+python train.py --num_triplets 100000 --minibatch 1800 --batch_size 8 --epochs 8 --margin 0.2 --num_workers 0 --device cuda

@@ -29,6 +29,8 @@ def train(model: torch.nn.Module,
     model.to(device)
     model.train()
     
+    print(f'len(dataloader): {len(dataloader)}')
+    
     if not os.path.exists(checkpoint_path):
         os.makedirs(checkpoint_path)
     
@@ -83,16 +85,21 @@ print(f'Device: {device}')
 print(f'Device name: {torch.cuda.get_device_name()}\n')
 
 embeddings_df = pd.read_pickle('./data/lfw_train_embeddings.pkl')
-triplets_df = offline_triplet_selection(embeddings_df, args.minibatch, args.num_triplets, args.margin)
+triplets_df = offline_triplet_selection(embeddings_df, args.minibatch, args.margin, args.num_triplets)
+
+if triplets_df.shape[0] != args.num_triplets:
+    triplets_df = triplets_df[:args.num_triplets]
 
 triplets_df['anchor_path'] = triplets_df['anchor_path'].apply(lambda x: data_path + x)
 triplets_df['positive_path'] = triplets_df['positive_path'].apply(lambda x: data_path + x)
 triplets_df['negative_path'] = triplets_df['negative_path'].apply(lambda x: data_path + x)
 
+print(f'triplets_df: {triplets_df.shape[0]}')
+
 dataset = TripletDataset(dataframe = triplets_df, 
                          transform = transform)
 
-dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=args.num_workers, pin_memory=True)
+dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
 torch.set_float32_matmul_precision('high')
 
