@@ -73,7 +73,7 @@ def offline_triplet_selection(embeddings_df, minibatch=1800, margin=0.2, max_tri
 
     ids = embeddings_df['id'].to_numpy()
     
-    for i in tqdm(range(0, len(embeddings_df), minibatch), desc="Minibatches"):
+    for i in range(0, len(embeddings_df), minibatch):
         if max_triplets is not None and len(triplets) >= max_triplets:
             break  # Interrompe o processo se o número máximo de triplets for atingido
 

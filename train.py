@@ -79,15 +79,16 @@ args = parse_args()
 device = args.device
 batch_size = args.batch_size
 
+print()
 print(f'Device: {device}')
 print(f'Device name: {torch.cuda.get_device_name()}\n')
 
 embeddings_df = pd.read_pickle('./data/lfw_train_embeddings.pkl')
 triplets_df = offline_triplet_selection(embeddings_df, args.minibatch, args.num_triplets, args.margin)
 
-triplets_df['anchor_path'] = triplets_df['anchor_path'].apply(lambda x: f'./data/triplets_df-faces/{x}')
-triplets_df['positive_path'] = triplets_df['positive_path'].apply(lambda x: f'./data/triplets_df-faces/{x}')
-triplets_df['negative_path'] = triplets_df['negative_path'].apply(lambda x: f'./data/triplets_df-faces/{x}')
+triplets_df['anchor_path'] = triplets_df['anchor_path'].apply(lambda x: x.replace('../data', './data'))
+triplets_df['positive_path'] = triplets_df['positive_path'].apply(lambda x: x.replace('../data', './data'))
+triplets_df['negative_path'] = triplets_df['negative_path'].apply(lambda x: x.replace('../data', './data'))
 
 dataset = TripletDataset(dataframe = triplets_df, 
                          transform = transform)
