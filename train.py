@@ -17,8 +17,6 @@ from torch.utils.data import DataLoader
 
 tensor_type = torch.bfloat16
 
-import torch
-
 if torch.cuda.is_available():
     gpu_properties = torch.cuda.get_device_properties(0)
 
@@ -51,7 +49,7 @@ def train(model: torch.nn.Module,
             
             optimizer.zero_grad()
             
-            with torch.autocast(device_type=device, dtype=torch.bfloat16):
+            with torch.autocast(device_type=device, dtype=tensor_type):
                 anchor_emb = model(anchor)
                 positive_emb = model(positive)
                 negative_emb = model(negative)
