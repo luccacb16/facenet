@@ -10,12 +10,20 @@ import warnings; warnings.filterwarnings("ignore", message="Initializing zero-el
 from utils import transform, TripletLoss, TripletDataset, parse_args, offline_triplet_selection
 from models.nn2 import FaceNet
 
-CHECKPOINT_PATH = './checkpoints/'
-
 import os
 import torch
 from tqdm import tqdm
 from torch.utils.data import DataLoader
+
+tensor_type = torch.bfloat16
+
+import torch
+
+if torch.cuda.is_available():
+    gpu_properties = torch.cuda.get_device_properties(0)
+
+    if gpu_properties.major < 8:
+        tensor_type = torch.float16
 
 def train(model: torch.nn.Module,
           dataloader: DataLoader,
@@ -28,8 +36,6 @@ def train(model: torch.nn.Module,
 
     model.to(device)
     model.train()
-    
-    print(f'len(dataloader): {len(dataloader)}')
     
     if not os.path.exists(checkpoint_path):
         os.makedirs(checkpoint_path)
@@ -78,23 +84,21 @@ args = parse_args()
 
 device = args.device
 batch_size = args.batch_size
+accumulation = args.accumulation
 data_path = args.data_path
+CHECKPOINT_PATH = args.checkpoint_path
 
 print()
 print(f'Device: {device}')
-print(f'Device name: {torch.cuda.get_device_name()}\n')
+print(f'Device name: {torch.cuda.get_device_name()}')
+print(f'Using tensor type: {tensor_type}\n')
 
-embeddings_df = pd.read_pickle('./data/lfw_train_embeddings.pkl')
-triplets_df = offline_triplet_selection(embeddings_df, args.minibatch, args.margin, args.num_triplets)
-
-if triplets_df.shape[0] != args.num_triplets:
-    triplets_df = triplets_df[:args.num_triplets]
+embeddings_df = pd.read_pickle('./data/LFW/lfw_train_embeddings.pkl')
+triplets_df = offline_triplet_selection(embeddings_df, minibatch=args.minibatch, margin=0.2, max_triplets=args.num_triplets)
 
 triplets_df['anchor_path'] = triplets_df['anchor_path'].apply(lambda x: data_path + x)
 triplets_df['positive_path'] = triplets_df['positive_path'].apply(lambda x: data_path + x)
 triplets_df['negative_path'] = triplets_df['negative_path'].apply(lambda x: data_path + x)
-
-print(f'triplets_df: {triplets_df.shape[0]}')
 
 dataset = TripletDataset(dataframe = triplets_df, 
                          transform = transform)
@@ -115,7 +119,7 @@ losses = train(
     optimizer        = adamW,
     triplet_loss     = triplet_loss,
     epochs           = args.epochs,
-    accumulation     = 64/batch_size,
+    accumulation     = accumulation/batch_size,
     checkpoint_path  = CHECKPOINT_PATH,
     device           = args.device
 )

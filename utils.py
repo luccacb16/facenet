@@ -73,9 +73,6 @@ def offline_triplet_selection(embeddings_df, minibatch=1800, margin=0.2, max_tri
     ids = embeddings_df['id'].to_numpy()
     
     for i in range(0, len(embeddings_df), minibatch):
-        if max_triplets is not None and len(triplets) >= max_triplets:
-            break  # Interrompe o processo se o número máximo de triplets for atingido
-
         batch_indices = list(range(i, min(i + minibatch, len(embeddings_df))))
         batch_embeddings = embeddings[batch_indices]
         batch_ids = ids[batch_indices]
@@ -83,9 +80,6 @@ def offline_triplet_selection(embeddings_df, minibatch=1800, margin=0.2, max_tri
         distances = torch.cdist(batch_embeddings, batch_embeddings, p=2)
         
         for anchor_idx in range(len(batch_indices)):
-            if max_triplets is not None and len(triplets) >= max_triplets:
-                break  # Interrompe o loop interno se o número máximo de triplets for atingido
-
             anchor_id = batch_ids[anchor_idx]
             positive_mask = batch_ids == anchor_id
             
@@ -114,6 +108,10 @@ def offline_triplet_selection(embeddings_df, minibatch=1800, margin=0.2, max_tri
 
     triplets_img_paths_df = triplets_df[['anchor_path', 'positive_path', 'negative_path', 'dist']]
     
+    # Retornar max_triplets escolhidos aleatoriamente
+    if max_triplets is not None:
+        triplets_img_paths_df = triplets_img_paths_df.sample(n=max_triplets).reset_index(drop=True)
+        
     return triplets_img_paths_df
 
 def parse_args():
@@ -121,10 +119,12 @@ def parse_args():
     parser.add_argument('--num_triplets', type=int, default=100_000, help='Número de triplets (default: 100.000)')
     parser.add_argument('--minibatch', type=int, default=1800, help='Tamanho do minibatch (default: 1800)')
     parser.add_argument('--batch_size', type=int, default=8, help='Tamanho do batch (default: 8)')
+    parser.add_argument('--accumulation', type=int, default=64, help='Acumulação de gradiente (default: 64)')
     parser.add_argument('--epochs', type=int, default=8, help='Número de epochs (default: 8)')
     parser.add_argument('--margin', type=float, default=0.2, help='Margem para triplet loss (default: 0.2)')
     parser.add_argument('--num_workers', type=int, default=0, help='Número de workers para o DataLoader (default: 0)')
-    parser.add_argument('--data_path', type=str, default='./data/lfw-faces/', help='Caminho para o dataset (default: ./data/lfw-faces/)')
+    parser.add_argument('--data_path', type=str, default='./data/LFW/lfw-faces/', help='Caminho para o dataset (default: ./data/lfw-faces/)')
     parser.add_argument('--device', type=str, default='cuda', help='Dispositivo para treinamento (default: cuda)')
+    parser.add_argument('--checkpoint_path', type=str, default='./checkpoints/', help='Caminho para salvar os checkpoints (default: ./checkpoints/)')
     
     return parser.parse_args()
