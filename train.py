@@ -42,8 +42,7 @@ def train(model: torch.nn.Module,
     
     losses = []
 
-    epoch_progress = tqdm(range(epochs), desc='Epochs', unit='epoch')
-    for epoch in epoch_progress:
+    for epoch in range(epochs):
         train_loss = 0
         
         batch_progress = tqdm(dataloader, desc=f'Epoch {epoch+1}/{epochs}', unit='batch', leave=True)
@@ -70,10 +69,7 @@ def train(model: torch.nn.Module,
         epoch_loss = train_loss / len(dataloader)
         print(f'Epoch {epoch+1}/{epochs} - Loss: {epoch_loss:.4f}')
         losses.append(epoch_loss)
-                
-        epoch_progress.set_description(f"Epoch {epoch+1}/{epochs} - Loss: {epoch_loss:.4f}")
-        epoch_progress.refresh()
-
+        
         torch.save(model.state_dict(), checkpoint_path + f'epoch_{epoch+1}.pt')
         
     return losses
